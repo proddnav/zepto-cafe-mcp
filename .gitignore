@@ -1,0 +1,41 @@
+# Browser data directories (contain cookies, sessions, passwords)
+zepto_browser_data/
+zepto_firefox_data/
+zepto_browser_data_*/
+zepto_firefox_data_*/
+zepto_browser_data_backup_*/
+zepto_firefox_data_backup_*/
+zepto_browser_data_corrupted_backup_*/
+zepto_firefox_data_corrupted_backup_*/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Environment variables
+.env
+.env.local
+config.ini
+secrets.json
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+*.log.*
+
+# Test files (optional - remove if you want to keep them)
+# test_*.py
+
