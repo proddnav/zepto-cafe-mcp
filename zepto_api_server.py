@@ -22,6 +22,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 # Import the core automation logic
@@ -275,6 +276,19 @@ async def root():
 async def health():
     """Health check for Railway/cloud providers."""
     return {"status": "healthy"}
+
+@app.get("/screenshot/{name}")
+async def get_screenshot(name: str):
+    """Get a screenshot for debugging."""
+    valid_names = ["checkout", "no_button", "login_1", "login_2", "login_3", "login_4", "login_5", "cart", "add_to_cart"]
+    if name not in valid_names:
+        raise HTTPException(status_code=400, detail=f"Invalid screenshot name. Valid: {valid_names}")
+
+    path = f"/tmp/zepto_{name}.png"
+    if not os.path.exists(path):
+        raise HTTPException(status_code=404, detail=f"Screenshot not found: {path}")
+
+    return FileResponse(path, media_type="image/png")
 
 @app.get("/catalog", response_model=CatalogResponse)
 async def get_catalog():
