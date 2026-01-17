@@ -989,47 +989,83 @@ async def run_multi_order(items: list, phone: str, address: str):
         except Exception as e:
             print(f"Address selection note: {e}")
 
-        # Click Pay/Checkout/Place Order button
-        order_state["last_message"] = "Looking for checkout button..."
-        await asyncio.sleep(2)  # Wait for cart to load
+        # Click Place Order button
+        order_state["last_message"] = "Looking for Place Order button..."
+        await asyncio.sleep(3)  # Wait for cart to fully load
 
-        # Try Place Order first (when wallet has balance)
+        # Wait for Place Order button to appear
+        try:
+            await page.wait_for_selector("button:has-text('Place Order')", timeout=10000)
+        except:
+            print("Place Order button not found after waiting")
+
+        # Try multiple selectors for Place Order
         pay_btn = await page.query_selector("button:has-text('Place Order')")
+        if not pay_btn:
+            # Try partial match
+            all_buttons = await page.query_selector_all("button")
+            for btn in all_buttons:
+                text = await btn.text_content()
+                if text and "Place" in text:
+                    pay_btn = btn
+                    print(f"Found button with text: {text}")
+                    break
+
         if not pay_btn:
             pay_btn = await page.query_selector("button:has-text('Pay')")
         if not pay_btn:
-            pay_btn = await page.query_selector("button:has-text('Checkout')")
-        if not pay_btn:
             pay_btn = await page.query_selector("button:has-text('Proceed')")
-        if not pay_btn:
-            # Try by class
-            pay_btn = await page.query_selector("button.checkout-btn")
 
-        print(f"Pay/Place Order button found: {pay_btn is not None}")
+        print(f"Place Order button found: {pay_btn is not None}")
 
         if pay_btn:
             order_state["last_message"] = "Clicking Place Order..."
+
+            # Scroll button into view
+            await page.evaluate("(btn) => btn.scrollIntoView({behavior: 'smooth', block: 'center'})", pay_btn)
+            await asyncio.sleep(0.5)
+
+            # Try multiple click methods
             try:
                 await pay_btn.click(force=True, timeout=5000)
-            except:
-                await page.evaluate("(btn) => btn.click()", pay_btn)
-            await asyncio.sleep(3)
+                print("Clicked with force=True")
+            except Exception as e1:
+                print(f"Force click failed: {e1}")
+                try:
+                    await page.evaluate("(btn) => btn.click()", pay_btn)
+                    print("Clicked with JS evaluate")
+                except Exception as e2:
+                    print(f"JS click failed: {e2}")
+                    # Try keyboard
+                    await pay_btn.focus()
+                    await page.keyboard.press("Enter")
+                    print("Pressed Enter on focused button")
+
+            await asyncio.sleep(5)  # Wait longer for order to process
+
+            # Take screenshot to see what happened
+            await page.screenshot(path="/tmp/zepto_checkout.png")
+            print("Screenshot saved to /tmp/zepto_checkout.png")
 
             # Check for order confirmation
-            order_state["last_message"] = "Waiting for order confirmation..."
+            order_state["last_message"] = "Checking order confirmation..."
 
             # Look for success indicators
-            success_msg = await page.query_selector("text=Order Placed")
-            if not success_msg:
-                success_msg = await page.query_selector("text=order confirmed")
-            if not success_msg:
-                success_msg = await page.query_selector("text=Thank you")
-
-            if success_msg:
+            page_content = await page.content()
+            if "Order Placed" in page_content or "order placed" in page_content.lower():
                 order_state["last_message"] = "Order placed successfully!"
+                print("SUCCESS: Order placed!")
+            elif "Thank you" in page_content or "Arriving" in page_content:
+                order_state["last_message"] = "Order placed successfully!"
+                print("SUCCESS: Order confirmed!")
+            else:
+                print("Order confirmation not detected in page content")
+                order_state["last_message"] = "Order submitted - check Zepto app for confirmation"
         else:
-            order_state["last_message"] = "Could not find checkout button"
-            print("WARNING: No checkout button found")
+            order_state["last_message"] = "Could not find Place Order button"
+            print("WARNING: No Place Order button found")
+            # Take screenshot for debugging
+            await page.screenshot(path="/tmp/zepto_no_button.png")
 
         # Check if payment OTP is needed
         otp_input = await page.query_selector("input[placeholder*='OTP']")
