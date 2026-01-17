@@ -989,20 +989,47 @@ async def run_multi_order(items: list, phone: str, address: str):
         except Exception as e:
             print(f"Address selection note: {e}")
 
-        # Click Pay/Checkout button
-        order_state["last_message"] = "Processing payment..."
-        pay_btn = await page.query_selector("button:has-text('Pay')")
+        # Click Pay/Checkout/Place Order button
+        order_state["last_message"] = "Looking for checkout button..."
+        await asyncio.sleep(2)  # Wait for cart to load
+
+        # Try Place Order first (when wallet has balance)
+        pay_btn = await page.query_selector("button:has-text('Place Order')")
+        if not pay_btn:
+            pay_btn = await page.query_selector("button:has-text('Pay')")
         if not pay_btn:
             pay_btn = await page.query_selector("button:has-text('Checkout')")
         if not pay_btn:
-            pay_btn = await page.query_selector("button:has-text('Place Order')")
+            pay_btn = await page.query_selector("button:has-text('Proceed')")
+        if not pay_btn:
+            # Try by class
+            pay_btn = await page.query_selector("button.checkout-btn")
+
+        print(f"Pay/Place Order button found: {pay_btn is not None}")
 
         if pay_btn:
+            order_state["last_message"] = "Clicking Place Order..."
             try:
                 await pay_btn.click(force=True, timeout=5000)
             except:
                 await page.evaluate("(btn) => btn.click()", pay_btn)
             await asyncio.sleep(3)
+
+            # Check for order confirmation
+            order_state["last_message"] = "Waiting for order confirmation..."
+
+            # Look for success indicators
+            success_msg = await page.query_selector("text=Order Placed")
+            if not success_msg:
+                success_msg = await page.query_selector("text=order confirmed")
+            if not success_msg:
+                success_msg = await page.query_selector("text=Thank you")
+
+            if success_msg:
+                order_state["last_message"] = "Order placed successfully!"
+        else:
+            order_state["last_message"] = "Could not find checkout button"
+            print("WARNING: No checkout button found")
 
         # Check if payment OTP is needed
         otp_input = await page.query_selector("input[placeholder*='OTP']")
