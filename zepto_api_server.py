@@ -142,8 +142,63 @@ order_state = {
     "address": None,
     "out_of_stock_items": None,
     "successfully_added": None,
-    "last_message": None
+    "last_message": None,
+    "logged_in": False  # Track if we're logged in
 }
+
+# Global persistent browser - keep alive across requests
+persistent_browser = {
+    "playwright": None,
+    "context": None,
+    "page": None,
+    "initialized": False
+}
+
+async def get_browser_page():
+    """Get or create a persistent browser page."""
+    global persistent_browser
+
+    if persistent_browser["initialized"] and persistent_browser["page"]:
+        try:
+            # Test if page is still alive
+            await persistent_browser["page"].title()
+            return persistent_browser["page"], persistent_browser["context"]
+        except:
+            # Page died, reinitialize
+            persistent_browser["initialized"] = False
+
+    # Initialize browser
+    if not persistent_browser["playwright"]:
+        persistent_browser["playwright"] = await async_playwright().start()
+
+    p = persistent_browser["playwright"]
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    user_data_dir = os.path.join(script_dir, "zepto_firefox_data")
+
+    # Clean up lock files
+    for f in ["lock", ".parentlock"]:
+        lock_path = os.path.join(user_data_dir, f)
+        if os.path.exists(lock_path):
+            try:
+                os.remove(lock_path)
+            except:
+                pass
+
+    # Create persistent context
+    context = await p.firefox.launch_persistent_context(
+        user_data_dir,
+        headless=True,
+        viewport={"width": 1280, "height": 720},
+        args=["--no-sandbox"]
+    )
+
+    page = context.pages[0] if context.pages else await context.new_page()
+
+    persistent_browser["context"] = context
+    persistent_browser["page"] = page
+    persistent_browser["initialized"] = True
+
+    return page, context
 
 # ============================================================================
 # HELPER FUNCTIONS
@@ -443,31 +498,9 @@ async def run_login_flow(phone: str):
         order_state["status"] = "launching_browser"
         order_state["last_message"] = "Launching browser for login..."
 
-        p = await async_playwright().start()
-        order_state["playwright"] = p
-
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        user_data_dir = os.path.join(script_dir, "zepto_firefox_data")
-
-        # Clean up any lock files first
-        import shutil
-        for f in ["lock", ".parentlock"]:
-            lock_path = os.path.join(user_data_dir, f)
-            if os.path.exists(lock_path):
-                try:
-                    os.remove(lock_path)
-                except:
-                    pass
-
-        context = await p.firefox.launch_persistent_context(
-            user_data_dir,
-            headless=True,
-            viewport={"width": 1280, "height": 720},
-            args=["--no-sandbox"]
-        )
+        # Use persistent browser
+        page, context = await get_browser_page()
         order_state["context"] = context
-
-        page = context.pages[0] if context.pages else await context.new_page()
         order_state["page"] = page
 
         # Go to Zepto login page
@@ -579,7 +612,9 @@ async def run_login_flow(phone: str):
                     await page.screenshot(path="/tmp/zepto_login_5.png")
 
                     order_state["status"] = "completed"
+                    order_state["logged_in"] = True  # Mark as logged in
                     order_state["last_message"] = "Login successful! You can now place orders."
+                    # DON'T close browser - keep it alive for future orders
                 else:
                     order_state["status"] = "error"
                     order_state["last_message"] = "OTP timeout - please try again"
@@ -594,6 +629,7 @@ async def run_login_flow(phone: str):
         order_state["status"] = "error"
         order_state["last_message"] = f"Login error: {str(e)}"
         print(f"Login error: {e}")
+        # DON'T close browser on error either
 
 async def run_single_order(item_url: str, phone: str, address: str):
     """Run single order in background - calls the MCP server logic."""
@@ -734,58 +770,9 @@ async def run_multi_order(items: list, phone: str, address: str):
         order_state["status"] = "launching_browser"
         order_state["last_message"] = f"Starting order with {len(items)} items..."
 
-        # Similar to single order but loops through items
-        # In production, use the full MCP server logic
-
-        p = await async_playwright().start()
-        order_state["playwright"] = p
-
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        user_data_dir = os.path.join(script_dir, "zepto_firefox_data")
-
-        # Try persistent context first, fall back to fresh browser if locked
-        try:
-            context = await p.firefox.launch_persistent_context(
-                user_data_dir,
-                headless=True,  # Must be headless for Railway (no display)
-                viewport={"width": 1280, "height": 720},
-                args=["--no-sandbox"]
-            )
-            print("Using persistent browser context")
-        except Exception as e:
-            print(f"Persistent context failed ({e}), using fresh browser...")
-            # Clean up lock files
-            import shutil
-            lock_file = os.path.join(user_data_dir, "lock")
-            parent_lock = os.path.join(user_data_dir, ".parentlock")
-            for f in [lock_file, parent_lock]:
-                if os.path.exists(f):
-                    try:
-                        os.remove(f)
-                    except:
-                        pass
-
-            # Try persistent context again after cleanup
-            try:
-                context = await p.firefox.launch_persistent_context(
-                    user_data_dir,
-                    headless=True,
-                    viewport={"width": 1280, "height": 720},
-                    args=["--no-sandbox"]
-                )
-                print("Using persistent browser context after cleanup")
-            except:
-                # Fall back to non-persistent browser
-                browser = await p.firefox.launch(
-                    headless=True,
-                    args=["--no-sandbox"]
-                )
-                context = await browser.new_context(viewport={"width": 1280, "height": 720})
-                print("Using fresh browser (no saved session)")
-
+        # Use persistent browser (same one used for login)
+        page, context = await get_browser_page()
         order_state["context"] = context
-
-        page = context.pages[0] if context.pages else await context.new_page()
         order_state["page"] = page
 
         # Navigate to first item to check login status
