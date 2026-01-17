@@ -3070,21 +3070,35 @@ async def stop_order() -> str:
 
 
 async def main():
-    async with stdio_server() as (read_stream, write_stream):
-        await server.run(
-            read_stream,
-            write_stream,
-            InitializationOptions(
-                server_name="zepto-cafe",
-                server_version="0.1.0",
-                capabilities=server.get_capabilities(
-                    notification_options=NotificationOptions(),
-                    experimental_capabilities={},
+    try:
+        print("🚀 Starting Zepto Cafe MCP Server...", file=sys.stderr)
+        async with stdio_server() as (read_stream, write_stream):
+            print("✅ Server transport established", file=sys.stderr)
+            await server.run(
+                read_stream,
+                write_stream,
+                InitializationOptions(
+                    server_name="zepto-cafe",
+                    server_version="0.1.0",
+                    capabilities=server.get_capabilities(
+                        notification_options=NotificationOptions(),
+                        experimental_capabilities={},
+                    ),
                 ),
-            ),
-        )
+            )
+    except Exception as e:
+        print(f"❌ Fatal error in MCP server: {e}", file=sys.stderr)
+        import traceback
+        print(traceback.format_exc(), file=sys.stderr)
+        raise
 
 if __name__ == "__main__":
-    asyncio.run(main())
-if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("🛑 Server stopped by user", file=sys.stderr)
+    except Exception as e:
+        print(f"❌ Failed to start server: {e}", file=sys.stderr)
+        import traceback
+        print(traceback.format_exc(), file=sys.stderr)
+        sys.exit(1)

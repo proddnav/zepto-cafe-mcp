@@ -1,0 +1,272 @@
+{
+  "name": "Zepto Cafe Telegram Bot",
+  "nodes": [
+    {
+      "parameters": {
+        "updates": ["message"]
+      },
+      "id": "1",
+      "name": "Telegram Trigger",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.1,
+      "position": [250, 300],
+      "webhookId": "zepto-bot"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Get the message\nconst msg = $input.first().json.message?.text || '';\nconst chatId = $input.first().json.message?.chat?.id;\nconst userName = $input.first().json.message?.from?.first_name || 'User';\n\n// Check if it's an OTP (4-6 digits)\nconst isOtp = /^\\d{4,6}$/.test(msg.trim());\n\n// Simple keyword parsing\nlet action = 'help';\nlet items = [];\nlet address = null;\n\nconst lowerMsg = msg.toLowerCase();\n\nif (isOtp) {\n  action = 'otp';\n} else if (lowerMsg.includes('status')) {\n  action = 'status';\n} else if (lowerMsg.includes('cancel')) {\n  action = 'cancel';\n} else if (lowerMsg.includes('order') || lowerMsg.includes('want') || lowerMsg.includes('get me')) {\n  action = 'order';\n  \n  // Extract items\n  const products = [\n    'iced americano', 'hazelnut latte', 'cappuccino', 'latte', 'masala chai',\n    'adrak chai', 'hot chocolate', 'cold coffee', 'espresso',\n    'butter croissant', 'almond croissant', 'veg puff', 'chicken puff',\n    'cheese maggi', 'plain maggi', 'mac and cheese',\n    'tiramisu', 'choco lava cake', 'samosa', 'idli', 'chole kulche',\n    'dal makhani rice', 'paneer makhani rice', 'butter chicken rice'\n  ];\n  \n  for (const product of products) {\n    if (lowerMsg.includes(product)) {\n      // Try to find quantity\n      const regex = new RegExp(`(\\\\d+)\\\\s*${product}|${product}\\\\s*(\\\\d+)?`, 'i');\n      const match = lowerMsg.match(regex);\n      const qty = match ? (parseInt(match[1] || match[2]) || 1) : 1;\n      items.push({ product_name: product, quantity: qty });\n    }\n  }\n  \n  // Extract address\n  if (lowerMsg.includes('office')) address = 'Office New Cafe';\n  else if (lowerMsg.includes('hsr') || lowerMsg.includes('home')) address = 'Hsr Home';\n  else if (lowerMsg.includes('hyd')) address = 'Hyd Home';\n}\n\nreturn {\n  json: {\n    action,\n    items,\n    address,\n    chatId,\n    userName,\n    originalMessage: msg,\n    isOtp,\n    otp: isOtp ? msg.trim() : null\n  }\n};"
+      },
+      "id": "2",
+      "name": "Parse Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [450, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.action }}",
+              "value2": "order"
+            }
+          ]
+        }
+      },
+      "id": "3",
+      "name": "Is Order?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [650, 200]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.action }}",
+              "value2": "status"
+            }
+          ]
+        }
+      },
+      "id": "4",
+      "name": "Is Status?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [650, 400]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.action }}",
+              "value2": "otp"
+            }
+          ]
+        }
+      },
+      "id": "5",
+      "name": "Is OTP?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [650, 600]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://etha-uncompressed-signe.ngrok-free.dev/order/multi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ items: $json.items, address: $json.address || 'Hsr Home', phone_number: '9959547700' }) }}"
+      },
+      "id": "6",
+      "name": "Start Order API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [900, 150]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://etha-uncompressed-signe.ngrok-free.dev/status"
+      },
+      "id": "7",
+      "name": "Get Status API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [900, 350]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://etha-uncompressed-signe.ngrok-free.dev/otp/login",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ otp: $('Parse Message').first().json.otp }) }}"
+      },
+      "id": "8",
+      "name": "Submit OTP API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [900, 550]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Parse Message').first().json.chatId }}",
+        "text": "=Order started!\n\nItems: {{ $('Parse Message').first().json.items.map(i => i.product_name + ' x' + i.quantity).join(', ') }}\nAddress: {{ $('Parse Message').first().json.address || 'Default' }}\n\nI'll process your order. Send OTP when you receive it!"
+      },
+      "id": "9",
+      "name": "Send Order Confirm",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.1,
+      "position": [1150, 150]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Parse Message').first().json.chatId }}",
+        "text": "=Order Status: {{ $json.status }}\n\n{{ $json.message || 'Processing...' }}"
+      },
+      "id": "10",
+      "name": "Send Status",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.1,
+      "position": [1150, 350]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Parse Message').first().json.chatId }}",
+        "text": "=OTP submitted! {{ $json.message || 'Processing...' }}"
+      },
+      "id": "11",
+      "name": "Send OTP Confirm",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.1,
+      "position": [1150, 550]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chatId }}",
+        "text": "=Hi {{ $json.userName }}!\n\nI'm your Zepto Cafe bot.\n\nSay things like:\n- \"Order 2 iced americano and 1 croissant\"\n- \"Order butter chicken rice to office\"\n- \"status\" - check order\n- \"cancel\" - cancel order\n\nWhen you get an OTP, just send the number!"
+      },
+      "id": "12",
+      "name": "Send Help",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.1,
+      "position": [900, 750]
+    }
+  ],
+  "connections": {
+    "Telegram Trigger": {
+      "main": [
+        [
+          {
+            "node": "Parse Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Message": {
+      "main": [
+        [
+          {
+            "node": "Is Order?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Is Status?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Is OTP?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Order?": {
+      "main": [
+        [
+          {
+            "node": "Start Order API",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Help",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Status?": {
+      "main": [
+        [
+          {
+            "node": "Get Status API",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Is OTP?": {
+      "main": [
+        [
+          {
+            "node": "Submit OTP API",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Start Order API": {
+      "main": [
+        [
+          {
+            "node": "Send Order Confirm",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Status API": {
+      "main": [
+        [
+          {
+            "node": "Send Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Submit OTP API": {
+      "main": [
+        [
+          {
+            "node": "Send OTP Confirm",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

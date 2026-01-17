@@ -564,7 +564,7 @@ async def run_multi_order(items: list, phone: str, address: str):
 
         context = await p.firefox.launch_persistent_context(
             user_data_dir,
-            headless=True,
+            headless=True,  # Must be headless for Railway (no display)
             viewport={"width": 1280, "height": 720},
             args=["--no-sandbox"]
         )
@@ -673,29 +673,56 @@ async def run_multi_order(items: list, phone: str, address: str):
             order_state["status"] = "adding_to_cart"
             order_state["last_message"] = f"Adding item {i+1}/{len(items)}..."
 
-            # Skip first item if we already loaded it (and didn't need to login)
-            if i > 0 or needs_login:
-                await page.goto(item["url"], wait_until="domcontentloaded")
-            await asyncio.sleep(2)  # Wait longer for page to stabilize
+            # Always navigate to item URL (even first one - we need to be on product page)
+            print(f"Navigating to item {i+1}: {item['url']}")
+            await page.goto(item["url"], wait_until="domcontentloaded")
+
+            # Wait for Add To Cart or Notify Me button to appear
+            try:
+                await page.wait_for_selector("button.WJXJe:has-text('Add To Cart'), button[aria-label='Notify Me']", timeout=5000)
+            except:
+                print(f"Waiting longer for buttons to load...")
+                await asyncio.sleep(3)
 
             # Check stock
             notify_btn = await page.query_selector("button[aria-label='Notify Me']")
             if notify_btn:
+                print(f"Item {i+1} is OUT OF STOCK")
                 out_of_stock.append(item["url"])
                 continue
 
-            # Add to cart - use force click and JavaScript fallback
-            add_btn = await page.query_selector("button:has-text('Add To Cart')")
-            if add_btn:
+            # Check if item is already in cart (has +/- quantity buttons)
+            increase_btn = await page.query_selector("button[aria-label='Increase quantity by one']")
+
+            if increase_btn:
+                # Item already in cart - just increase quantity
+                print(f"Item {i+1} already in cart, increasing quantity")
                 for _ in range(item.get("qty", 1)):
                     try:
-                        # Try force click first
-                        await add_btn.click(force=True, timeout=5000)
+                        await increase_btn.click(force=True, timeout=5000)
                     except:
-                        # Fallback: use JavaScript click
-                        await page.evaluate("(btn) => btn.click()", add_btn)
-                    await asyncio.sleep(0.5)
+                        await page.evaluate("(btn) => btn.click()", increase_btn)
+                    await asyncio.sleep(0.3)
                 successfully_added.append(item["url"])
+            else:
+                # Item not in cart - look for Add To Cart button
+                add_btn = await page.query_selector("button.WJXJe:has-text('Add To Cart')")
+                if not add_btn:
+                    add_btn = await page.query_selector("button:has-text('Add To Cart')")
+                if not add_btn:
+                    add_btn = await page.query_selector("button:has-text('Add to Cart')")
+                if not add_btn:
+                    add_btn = await page.query_selector("button[aria-label='Add to Cart']")
+
+                print(f"Add to Cart button found: {add_btn is not None}")
+                if add_btn:
+                    for _ in range(item.get("qty", 1)):
+                        try:
+                            await add_btn.click(force=True, timeout=5000)
+                        except:
+                            await page.evaluate("(btn) => btn.click()", add_btn)
+                        await asyncio.sleep(0.5)
+                    successfully_added.append(item["url"])
 
         order_state["successfully_added"] = successfully_added
         order_state["out_of_stock_items"] = out_of_stock
