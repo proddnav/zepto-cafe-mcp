@@ -562,12 +562,46 @@ async def run_multi_order(items: list, phone: str, address: str):
         script_dir = os.path.dirname(os.path.abspath(__file__))
         user_data_dir = os.path.join(script_dir, "zepto_firefox_data")
 
-        context = await p.firefox.launch_persistent_context(
-            user_data_dir,
-            headless=True,  # Must be headless for Railway (no display)
-            viewport={"width": 1280, "height": 720},
-            args=["--no-sandbox"]
-        )
+        # Try persistent context first, fall back to fresh browser if locked
+        try:
+            context = await p.firefox.launch_persistent_context(
+                user_data_dir,
+                headless=True,  # Must be headless for Railway (no display)
+                viewport={"width": 1280, "height": 720},
+                args=["--no-sandbox"]
+            )
+            print("Using persistent browser context")
+        except Exception as e:
+            print(f"Persistent context failed ({e}), using fresh browser...")
+            # Clean up lock files
+            import shutil
+            lock_file = os.path.join(user_data_dir, "lock")
+            parent_lock = os.path.join(user_data_dir, ".parentlock")
+            for f in [lock_file, parent_lock]:
+                if os.path.exists(f):
+                    try:
+                        os.remove(f)
+                    except:
+                        pass
+
+            # Try persistent context again after cleanup
+            try:
+                context = await p.firefox.launch_persistent_context(
+                    user_data_dir,
+                    headless=True,
+                    viewport={"width": 1280, "height": 720},
+                    args=["--no-sandbox"]
+                )
+                print("Using persistent browser context after cleanup")
+            except:
+                # Fall back to non-persistent browser
+                browser = await p.firefox.launch(
+                    headless=True,
+                    args=["--no-sandbox"]
+                )
+                context = await browser.new_context(viewport={"width": 1280, "height": 720})
+                print("Using fresh browser (no saved session)")
+
         order_state["context"] = context
 
         page = context.pages[0] if context.pages else await context.new_page()
