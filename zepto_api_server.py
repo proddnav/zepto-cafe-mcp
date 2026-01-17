@@ -575,12 +575,33 @@ async def run_multi_order(items: list, phone: str, address: str):
 
         # Navigate to first item to check login status
         first_url = items[0]["url"]
-        await page.goto(first_url, wait_until="domcontentloaded")
-        await asyncio.sleep(2)
+        order_state["status"] = "navigating"
+        order_state["last_message"] = "Opening Zepto..."
+        print(f"Navigating to: {first_url}")
 
-        # Check if login is needed
+        await page.goto(first_url, wait_until="domcontentloaded")
+        await asyncio.sleep(3)  # Wait longer for page to fully load
+
+        # Check if login is needed - try multiple selectors
+        print("Checking login status...")
         login_btn = await page.query_selector("span[data-testid='login-btn']")
-        if login_btn and await login_btn.is_visible():
+        if not login_btn:
+            login_btn = await page.query_selector("button:has-text('Login')")
+        if not login_btn:
+            login_btn = await page.query_selector("a:has-text('Login')")
+        if not login_btn:
+            login_btn = await page.query_selector("[data-testid*='login']")
+
+        # Also check if cart button exists (means logged in)
+        cart_btn_check = await page.query_selector("button[data-testid='cart-btn']")
+        is_logged_in = cart_btn_check is not None
+
+        print(f"Login button found: {login_btn is not None}")
+        print(f"Cart button found (logged in): {is_logged_in}")
+
+        needs_login = login_btn is not None and not is_logged_in
+
+        if needs_login:
             order_state["status"] = "logging_in"
             order_state["last_message"] = "Logging in..."
 
@@ -652,8 +673,8 @@ async def run_multi_order(items: list, phone: str, address: str):
             order_state["status"] = "adding_to_cart"
             order_state["last_message"] = f"Adding item {i+1}/{len(items)}..."
 
-            # Skip first item if we already loaded it
-            if i > 0 or login_btn:
+            # Skip first item if we already loaded it (and didn't need to login)
+            if i > 0 or needs_login:
                 await page.goto(item["url"], wait_until="domcontentloaded")
             await asyncio.sleep(2)  # Wait longer for page to stabilize
 
