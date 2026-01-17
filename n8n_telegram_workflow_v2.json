@@ -76,7 +76,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "https://zepto-cafe-mcp-production.up.railway.app/order/multi",
+        "url": "https://etha-uncompressed-signe.ngrok-free.dev/order/multi",
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify({ items: $json.items, address: $json.address || 'Hsr Home', phone_number: '9959547700' }) }}"

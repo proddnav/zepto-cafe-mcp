@@ -321,6 +321,27 @@ async def start_multi_order(request: MultiOrderRequest, background_tasks: Backgr
         "items_count": len(resolved_items)
     }
 
+class LoginRequest(BaseModel):
+    phone_number: str
+
+@app.post("/login")
+async def start_login(request: LoginRequest, background_tasks: BackgroundTasks):
+    """Start login flow - triggers OTP to phone."""
+    global order_state
+
+    if order_state["status"] not in ["idle", "completed", "error", "cancelled"]:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Operation in progress. Status: {order_state['status']}"
+        )
+
+    order_state["status"] = "starting_login"
+    order_state["phone_number"] = request.phone_number
+
+    background_tasks.add_task(run_login_flow, request.phone_number)
+
+    return {"message": "Login started - OTP will be sent to your phone", "status": "starting"}
+
 @app.post("/otp/login")
 async def submit_login_otp(request: OTPRequest):
     """Submit login OTP."""
@@ -413,6 +434,166 @@ async def handle_stock_decision(request: StockDecisionRequest):
 # ============================================================================
 # BACKGROUND ORDER TASKS
 # ============================================================================
+
+async def run_login_flow(phone: str):
+    """Run login flow in background - triggers OTP."""
+    global order_state
+
+    try:
+        order_state["status"] = "launching_browser"
+        order_state["last_message"] = "Launching browser for login..."
+
+        p = await async_playwright().start()
+        order_state["playwright"] = p
+
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        user_data_dir = os.path.join(script_dir, "zepto_firefox_data")
+
+        # Clean up any lock files first
+        import shutil
+        for f in ["lock", ".parentlock"]:
+            lock_path = os.path.join(user_data_dir, f)
+            if os.path.exists(lock_path):
+                try:
+                    os.remove(lock_path)
+                except:
+                    pass
+
+        context = await p.firefox.launch_persistent_context(
+            user_data_dir,
+            headless=True,
+            viewport={"width": 1280, "height": 720},
+            args=["--no-sandbox"]
+        )
+        order_state["context"] = context
+
+        page = context.pages[0] if context.pages else await context.new_page()
+        order_state["page"] = page
+
+        # Go to Zepto login page
+        order_state["status"] = "navigating"
+        order_state["last_message"] = "Opening Zepto..."
+        print("Navigating to Zepto...")
+
+        await page.goto("https://www.zepto.com", wait_until="domcontentloaded")
+        await asyncio.sleep(3)
+
+        # Take screenshot for debugging
+        screenshot_path = "/tmp/zepto_login_1.png"
+        await page.screenshot(path=screenshot_path)
+        print(f"Screenshot saved to {screenshot_path}")
+
+        # Find and click login button
+        login_btn = await page.query_selector("span[data-testid='login-btn']")
+        if not login_btn:
+            login_btn = await page.query_selector("button:has-text('Login')")
+        if not login_btn:
+            login_btn = await page.query_selector("[data-testid*='login']")
+
+        print(f"Login button found: {login_btn is not None}")
+
+        if login_btn:
+            order_state["last_message"] = "Clicking login..."
+            try:
+                await login_btn.click(force=True)
+            except:
+                await page.evaluate("(btn) => btn.click()", login_btn)
+            await asyncio.sleep(2)
+        else:
+            # Try going directly to login URL
+            print("No login button, trying direct URL...")
+            await page.goto("https://www.zepto.com/auth/login", wait_until="domcontentloaded")
+            await asyncio.sleep(2)
+
+        # Screenshot after clicking login
+        await page.screenshot(path="/tmp/zepto_login_2.png")
+
+        # Find phone input
+        order_state["last_message"] = "Entering phone number..."
+        phone_input = await page.query_selector("input[type='tel']")
+        if not phone_input:
+            phone_input = await page.query_selector("input[placeholder*='phone']")
+        if not phone_input:
+            phone_input = await page.query_selector("input[placeholder*='mobile']")
+
+        print(f"Phone input found: {phone_input is not None}")
+
+        if phone_input:
+            await phone_input.fill(phone)
+            await asyncio.sleep(1)
+
+            # Screenshot after entering phone
+            await page.screenshot(path="/tmp/zepto_login_3.png")
+
+            # Click send OTP / continue button
+            order_state["last_message"] = "Sending OTP..."
+            send_btn = await page.query_selector("button:has-text('Continue')")
+            if not send_btn:
+                send_btn = await page.query_selector("button:has-text('Send OTP')")
+            if not send_btn:
+                send_btn = await page.query_selector("button:has-text('Get OTP')")
+            if not send_btn:
+                send_btn = await page.query_selector("button[type='submit']")
+
+            print(f"Send OTP button found: {send_btn is not None}")
+
+            if send_btn:
+                try:
+                    await send_btn.click(force=True)
+                except:
+                    await page.evaluate("(btn) => btn.click()", send_btn)
+                await asyncio.sleep(3)
+
+                # Screenshot after sending OTP
+                await page.screenshot(path="/tmp/zepto_login_4.png")
+
+                order_state["status"] = "waiting_for_login_otp"
+                order_state["waiting_for"] = "login_otp"
+                order_state["last_message"] = f"OTP sent to {phone}. Reply with OTP."
+                print(f"Waiting for OTP... Status: {order_state['status']}")
+
+                # Wait for OTP (5 minutes timeout)
+                timeout = 300
+                while order_state["status"] == "waiting_for_login_otp" and timeout > 0:
+                    await asyncio.sleep(1)
+                    timeout -= 1
+
+                if order_state.get("login_otp"):
+                    otp = order_state["login_otp"]
+                    print(f"Got OTP: {otp}")
+
+                    # Enter OTP
+                    otp_inputs = await page.query_selector_all("input[type='tel']")
+                    if len(otp_inputs) >= 4:
+                        for i, digit in enumerate(otp[:6]):
+                            if i < len(otp_inputs):
+                                await otp_inputs[i].fill(digit)
+                                await asyncio.sleep(0.1)
+                    else:
+                        # Single input
+                        otp_input = await page.query_selector("input[inputmode='numeric']")
+                        if otp_input:
+                            await otp_input.fill(otp)
+
+                    await asyncio.sleep(3)
+                    await page.screenshot(path="/tmp/zepto_login_5.png")
+
+                    order_state["status"] = "completed"
+                    order_state["last_message"] = "Login successful! You can now place orders."
+                else:
+                    order_state["status"] = "error"
+                    order_state["last_message"] = "OTP timeout - please try again"
+            else:
+                order_state["status"] = "error"
+                order_state["last_message"] = "Could not find Send OTP button"
+        else:
+            order_state["status"] = "error"
+            order_state["last_message"] = "Could not find phone input field"
+
+    except Exception as e:
+        order_state["status"] = "error"
+        order_state["last_message"] = f"Login error: {str(e)}"
+        print(f"Login error: {e}")
 
 async def run_single_order(item_url: str, phone: str, address: str):
     """Run single order in background - calls the MCP server logic."""
