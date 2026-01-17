@@ -1,0 +1,20 @@
+# Zepto Cafe API Server Dependencies
+
+# Core MCP dependencies
+mcp>=1.0.0
+
+# Web framework for REST API
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+
+# Browser automation
+playwright>=1.40.0
+
+# Environment variables
+python-dotenv>=1.0.0
+
+# HTTP client (for n8n webhook callbacks)
+httpx>=0.25.0
+
+# Pydantic for data validation
+pydantic>=2.5.0

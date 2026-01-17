@@ -1,0 +1,422 @@
+{
+  "name": "Zepto Cafe Telegram Order Bot",
+  "nodes": [
+    {
+      "parameters": {
+        "updates": ["message"],
+        "additionalFields": {}
+      },
+      "id": "telegram-trigger",
+      "name": "Telegram Trigger",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.1,
+      "position": [0, 0],
+      "webhookId": "zepto-telegram-bot"
+    },
+    {
+      "parameters": {
+        "model": "gpt-4o-mini",
+        "messages": {
+          "values": [
+            {
+              "content": "=You are a helpful assistant that parses food orders from Zepto Cafe.\n\nAvailable products:\n- almond croissant\n- black forest shake\n- hazelnut latte\n- mac and cheese\n- strawberry lemonade\n- iced americano\n- spanish coffee\n- cappuccino\n- latte\n- hot chocolate\n- masala chai\n- adrak chai\n- butter croissant\n- veg puff\n- chicken puff\n- cheese maggi\n- plain maggi\n- tiramisu\n- choco lava cake\n- samosa 2 pieces\n- idli sambar dip\n- chole kulche\n- dal makhani rice\n- paneer makhani rice\n- butter chicken rice\n\nUser message: {{ $json.message.text }}\n\nExtract the order details and respond with ONLY a valid JSON object (no markdown, no explanation):\n{\n  \"action\": \"order\" | \"status\" | \"cancel\" | \"help\" | \"unknown\",\n  \"items\": [{\"product_name\": \"...\", \"quantity\": 1}],\n  \"address\": \"...\"\n}\n\nIf user says 'status', action is 'status'. If 'cancel', action is 'cancel'. If greeting or unclear, action is 'help'.\nDefault quantity is 1. Common addresses: 'office', 'home', 'hsr home'.\nIf no address mentioned, use null for address field."
+            }
+          ]
+        },
+        "options": {
+          "temperature": 0.1
+        }
+      },
+      "id": "openai-parse",
+      "name": "Parse Order with AI",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1.8,
+      "position": [220, 0],
+      "credentials": {
+        "openAiApi": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "OpenAI API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse the AI response\nconst aiResponse = $input.first().json.message?.content || $input.first().json.text || '{}';\n\ntry {\n  // Clean up any markdown formatting\n  let cleanJson = aiResponse.replace(/```json\\n?/g, '').replace(/```\\n?/g, '').trim();\n  const parsed = JSON.parse(cleanJson);\n  \n  return {\n    json: {\n      action: parsed.action || 'unknown',\n      items: parsed.items || [],\n      address: parsed.address,\n      chatId: $('Telegram Trigger').first().json.message.chat.id,\n      userName: $('Telegram Trigger').first().json.message.from.first_name || 'User',\n      originalMessage: $('Telegram Trigger').first().json.message.text\n    }\n  };\n} catch (e) {\n  return {\n    json: {\n      action: 'unknown',\n      items: [],\n      address: null,\n      chatId: $('Telegram Trigger').first().json.message.chat.id,\n      userName: $('Telegram Trigger').first().json.message.from.first_name || 'User',\n      originalMessage: $('Telegram Trigger').first().json.message.text,\n      parseError: e.message\n    }\n  };\n}"
+      },
+      "id": "code-parse",
+      "name": "Extract Order Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [440, 0]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": { "caseSensitive": false },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "order",
+                    "operator": { "type": "string", "operation": "equals" }
+                  }
+                ]
+              },
+              "renameOutput": true,
+              "outputKey": "order"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": false },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "status",
+                    "operator": { "type": "string", "operation": "equals" }
+                  }
+                ]
+              },
+              "renameOutput": true,
+              "outputKey": "status"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": false },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "cancel",
+                    "operator": { "type": "string", "operation": "equals" }
+                  }
+                ]
+              },
+              "renameOutput": true,
+              "outputKey": "cancel"
+            }
+          ],
+          "fallbackOutput": {
+            "renameOutput": true,
+            "outputKey": "help"
+          }
+        }
+      },
+      "id": "switch-action",
+      "name": "Route by Action",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [660, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.ZEPTO_API_URL }}/order/multi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"items\": {{ JSON.stringify($json.items) }},\n  \"address\": {{ $json.address ? '\"' + $json.address + '\"' : '\"Hsr Home\"' }}\n}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "http-order",
+      "name": "Start Order",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [880, -150]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.ZEPTO_API_URL }}/status",
+        "options": {}
+      },
+      "id": "http-status",
+      "name": "Get Status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [880, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.ZEPTO_API_URL }}/stop",
+        "options": {}
+      },
+      "id": "http-cancel",
+      "name": "Cancel Order",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [880, 150]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Extract Order Data').first().json.chatId }}",
+        "text": "=Order started! \n\nItems: {{ $('Extract Order Data').first().json.items.map(i => i.product_name + ' x' + i.quantity).join(', ') }}\nAddress: {{ $('Extract Order Data').first().json.address || 'Default' }}\n\nI'll update you on the progress. If you need to provide OTP, just send it here!",
+        "additionalFields": {}
+      },
+      "id": "telegram-order-response",
+      "name": "Send Order Confirmation",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [1100, -150],
+      "credentials": {
+        "telegramApi": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "Telegram Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Extract Order Data').first().json.chatId }}",
+        "text": "=Order Status: {{ $json.status }}\n\n{{ $json.message || 'Processing...' }}\n\n{{ $json.waiting_for === 'login_otp' ? 'Please send your LOGIN OTP' : '' }}{{ $json.waiting_for === 'payment_otp' ? 'Please send your PAYMENT OTP' : '' }}",
+        "additionalFields": {}
+      },
+      "id": "telegram-status-response",
+      "name": "Send Status",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [1100, 0],
+      "credentials": {
+        "telegramApi": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "Telegram Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Extract Order Data').first().json.chatId }}",
+        "text": "Order cancelled successfully.",
+        "additionalFields": {}
+      },
+      "id": "telegram-cancel-response",
+      "name": "Send Cancel Confirmation",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [1100, 150],
+      "credentials": {
+        "telegramApi": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "Telegram Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chatId }}",
+        "text": "=Hi {{ $json.userName }}! I'm your Zepto Cafe ordering assistant.\n\nCommands:\n- Order: \"Order 2 iced americano and 1 croissant to office\"\n- Status: \"status\" or \"what's my order status?\"\n- Cancel: \"cancel order\"\n\nAvailable items: iced americano, hazelnut latte, cappuccino, masala chai, butter croissant, veg puff, mac and cheese, tiramisu, and more!\n\nJust tell me what you'd like to order!",
+        "additionalFields": {}
+      },
+      "id": "telegram-help-response",
+      "name": "Send Help",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [880, 300],
+      "credentials": {
+        "telegramApi": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "Telegram Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": false },
+          "conditions": [
+            {
+              "leftValue": "={{ $('Telegram Trigger').first().json.message.text }}",
+              "rightValue": "^\\d{4,6}$",
+              "operator": { "type": "string", "operation": "regex" }
+            }
+          ]
+        }
+      },
+      "id": "if-otp",
+      "name": "Check if OTP",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [220, 200]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.ZEPTO_API_URL }}/status",
+        "options": {}
+      },
+      "id": "http-check-otp-needed",
+      "name": "Check OTP Type",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [440, 250]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": { "caseSensitive": false },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.waiting_for }}",
+                    "rightValue": "login_otp",
+                    "operator": { "type": "string", "operation": "equals" }
+                  }
+                ]
+              },
+              "renameOutput": true,
+              "outputKey": "login"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": false },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.waiting_for }}",
+                    "rightValue": "payment_otp",
+                    "operator": { "type": "string", "operation": "equals" }
+                  }
+                ]
+              },
+              "renameOutput": true,
+              "outputKey": "payment"
+            }
+          ]
+        }
+      },
+      "id": "switch-otp-type",
+      "name": "Route OTP Type",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [660, 250]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.ZEPTO_API_URL }}/otp/login",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"otp\": \"{{ $('Telegram Trigger').first().json.message.text }}\"\n}",
+        "options": {}
+      },
+      "id": "http-login-otp",
+      "name": "Submit Login OTP",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [880, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.ZEPTO_API_URL }}/otp/payment",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"otp\": \"{{ $('Telegram Trigger').first().json.message.text }}\"\n}",
+        "options": {}
+      },
+      "id": "http-payment-otp",
+      "name": "Submit Payment OTP",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [880, 350]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Telegram Trigger').first().json.message.chat.id }}",
+        "text": "=OTP submitted! {{ $json.message || 'Processing...' }}",
+        "additionalFields": {}
+      },
+      "id": "telegram-otp-response",
+      "name": "Confirm OTP",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [1100, 275],
+      "credentials": {
+        "telegramApi": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "Telegram Bot"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Telegram Trigger": {
+      "main": [
+        [
+          { "node": "Check if OTP", "type": "main", "index": 0 },
+          { "node": "Parse Order with AI", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Parse Order with AI": {
+      "main": [
+        [{ "node": "Extract Order Data", "type": "main", "index": 0 }]
+      ]
+    },
+    "Extract Order Data": {
+      "main": [
+        [{ "node": "Route by Action", "type": "main", "index": 0 }]
+      ]
+    },
+    "Route by Action": {
+      "main": [
+        [{ "node": "Start Order", "type": "main", "index": 0 }],
+        [{ "node": "Get Status", "type": "main", "index": 0 }],
+        [{ "node": "Cancel Order", "type": "main", "index": 0 }],
+        [{ "node": "Send Help", "type": "main", "index": 0 }]
+      ]
+    },
+    "Start Order": {
+      "main": [
+        [{ "node": "Send Order Confirmation", "type": "main", "index": 0 }]
+      ]
+    },
+    "Get Status": {
+      "main": [
+        [{ "node": "Send Status", "type": "main", "index": 0 }]
+      ]
+    },
+    "Cancel Order": {
+      "main": [
+        [{ "node": "Send Cancel Confirmation", "type": "main", "index": 0 }]
+      ]
+    },
+    "Check if OTP": {
+      "main": [
+        [{ "node": "Check OTP Type", "type": "main", "index": 0 }],
+        []
+      ]
+    },
+    "Check OTP Type": {
+      "main": [
+        [{ "node": "Route OTP Type", "type": "main", "index": 0 }]
+      ]
+    },
+    "Route OTP Type": {
+      "main": [
+        [{ "node": "Submit Login OTP", "type": "main", "index": 0 }],
+        [{ "node": "Submit Payment OTP", "type": "main", "index": 0 }]
+      ]
+    },
+    "Submit Login OTP": {
+      "main": [
+        [{ "node": "Confirm OTP", "type": "main", "index": 0 }]
+      ]
+    },
+    "Submit Payment OTP": {
+      "main": [
+        [{ "node": "Confirm OTP", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 1,
+  "pinData": {}
+}
