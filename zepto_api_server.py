@@ -584,6 +584,11 @@ async def run_multi_order(items: list, phone: str, address: str):
 
         # Check if login is needed - try multiple selectors
         print("Checking login status...")
+
+        # Wait a bit more for page to stabilize
+        await asyncio.sleep(2)
+
+        # Try to find login button with multiple selectors
         login_btn = await page.query_selector("span[data-testid='login-btn']")
         if not login_btn:
             login_btn = await page.query_selector("button:has-text('Login')")
@@ -591,26 +596,44 @@ async def run_multi_order(items: list, phone: str, address: str):
             login_btn = await page.query_selector("a:has-text('Login')")
         if not login_btn:
             login_btn = await page.query_selector("[data-testid*='login']")
+        if not login_btn:
+            login_btn = await page.query_selector("div:has-text('Login'):not(:has(div))")
 
-        # Also check if cart button exists (means logged in)
+        # Check if cart button exists (means logged in)
         cart_btn_check = await page.query_selector("button[data-testid='cart-btn']")
-        is_logged_in = cart_btn_check is not None
+
+        # Also check for user profile/account indicator
+        profile_btn = await page.query_selector("[data-testid='profile-btn']")
+        account_indicator = await page.query_selector("[data-testid='account']")
+
+        is_logged_in = cart_btn_check is not None or profile_btn is not None or account_indicator is not None
 
         print(f"Login button found: {login_btn is not None}")
-        print(f"Cart button found (logged in): {is_logged_in}")
+        print(f"Cart button found: {cart_btn_check is not None}")
+        print(f"Is logged in: {is_logged_in}")
 
-        needs_login = login_btn is not None and not is_logged_in
+        # Need login if: login button exists OR not logged in (no cart/profile)
+        needs_login = not is_logged_in
 
         if needs_login:
             order_state["status"] = "logging_in"
             order_state["last_message"] = "Logging in..."
 
-            # Click login button
-            try:
-                await login_btn.click(force=True)
-            except:
-                await page.evaluate("(btn) => btn.click()", login_btn)
-            await asyncio.sleep(1)
+            # Click login button if found
+            if login_btn:
+                try:
+                    await login_btn.click(force=True)
+                except:
+                    try:
+                        await page.evaluate("(btn) => btn.click()", login_btn)
+                    except:
+                        pass
+                await asyncio.sleep(1)
+            else:
+                # No login button found, try navigating to login page directly
+                print("No login button found, trying direct login URL...")
+                await page.goto("https://www.zepto.com/auth/login", wait_until="domcontentloaded")
+                await asyncio.sleep(2)
 
             # Enter phone number
             phone_input = await page.query_selector("input[type='tel']")

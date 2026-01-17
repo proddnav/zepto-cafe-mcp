@@ -76,7 +76,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "https://etha-uncompressed-signe.ngrok-free.dev/order/multi",
+        "url": "https://zepto-cafe-mcp-production.up.railway.app/order/multi",
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify({ items: $json.items, address: $json.address || 'Hsr Home', phone_number: '9959547700' }) }}"
@@ -90,7 +90,7 @@
     {
       "parameters": {
         "method": "GET",
-        "url": "https://etha-uncompressed-signe.ngrok-free.dev/status"
+        "url": "https://zepto-cafe-mcp-production.up.railway.app/status"
       },
       "id": "7",
       "name": "Get Status API",
@@ -101,7 +101,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "https://etha-uncompressed-signe.ngrok-free.dev/otp/login",
+        "url": "https://zepto-cafe-mcp-production.up.railway.app/otp/login",
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify({ otp: $('Parse Message').first().json.otp }) }}"
