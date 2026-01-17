@@ -434,11 +434,13 @@ async def run_single_order(item_url: str, phone: str, address: str):
         user_data_dir = os.path.join(script_dir, "zepto_firefox_data")
 
         # Launch Firefox with persistent context
+        # Use headed mode with Xvfb for better compatibility
         context = await p.firefox.launch_persistent_context(
             user_data_dir,
-            headless=True,  # Run headless in cloud
+            headless=False,  # Use headed mode - Railway has display support
             viewport={"width": 1280, "height": 720},
-            args=["--no-sandbox"]
+            args=["--no-sandbox"],
+            slow_mo=100  # Slow down for stability
         )
         order_state["context"] = context
 
@@ -495,7 +497,8 @@ async def run_single_order(item_url: str, phone: str, address: str):
 
         add_btn = await page.query_selector("button:has-text('Add To Cart')")
         if add_btn:
-            await add_btn.click()
+            # Use force click to bypass overlapping elements
+            await add_btn.click(force=True)
             await asyncio.sleep(1)
 
         # Go to checkout
@@ -577,7 +580,7 @@ async def run_multi_order(items: list, phone: str, address: str):
             order_state["last_message"] = f"Adding item {i+1}/{len(items)}..."
 
             await page.goto(item["url"], wait_until="domcontentloaded")
-            await asyncio.sleep(1)
+            await asyncio.sleep(2)  # Wait longer for page to stabilize
 
             # Check stock
             notify_btn = await page.query_selector("button[aria-label='Notify Me']")
@@ -585,12 +588,17 @@ async def run_multi_order(items: list, phone: str, address: str):
                 out_of_stock.append(item["url"])
                 continue
 
-            # Add to cart
+            # Add to cart - use force click and JavaScript fallback
             add_btn = await page.query_selector("button:has-text('Add To Cart')")
             if add_btn:
                 for _ in range(item.get("qty", 1)):
-                    await add_btn.click()
-                    await asyncio.sleep(0.3)
+                    try:
+                        # Try force click first
+                        await add_btn.click(force=True, timeout=5000)
+                    except:
+                        # Fallback: use JavaScript click
+                        await page.evaluate("(btn) => btn.click()", add_btn)
+                    await asyncio.sleep(0.5)
                 successfully_added.append(item["url"])
 
         order_state["successfully_added"] = successfully_added
