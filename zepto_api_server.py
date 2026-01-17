@@ -194,7 +194,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Zepto Cafe API",
     description="REST API for Zepto Cafe ordering automation",
-    version="1.0.0",
+    version="1.0.1",  # Bumped version to verify deployment
     lifespan=lifespan
 )
 
