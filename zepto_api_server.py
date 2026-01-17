@@ -621,10 +621,84 @@ async def run_multi_order(items: list, phone: str, address: str):
         order_state["status"] = "checkout"
         order_state["last_message"] = "Proceeding to checkout..."
 
-        # ... rest of checkout flow similar to single order
+        # Click cart button
+        cart_btn = await page.query_selector("button[data-testid='cart-btn']")
+        if cart_btn:
+            try:
+                await cart_btn.click(force=True, timeout=5000)
+            except:
+                await page.evaluate("(btn) => btn.click()", cart_btn)
+            await asyncio.sleep(2)
+
+        # Select address if needed
+        order_state["last_message"] = f"Selecting address: {address}..."
+        try:
+            # Look for address selector
+            address_div = await page.query_selector(f"div:has-text('{address}')")
+            if address_div:
+                await address_div.click(force=True)
+                await asyncio.sleep(1)
+        except Exception as e:
+            print(f"Address selection note: {e}")
+
+        # Click Pay/Checkout button
+        order_state["last_message"] = "Processing payment..."
+        pay_btn = await page.query_selector("button:has-text('Pay')")
+        if not pay_btn:
+            pay_btn = await page.query_selector("button:has-text('Checkout')")
+        if not pay_btn:
+            pay_btn = await page.query_selector("button:has-text('Place Order')")
+
+        if pay_btn:
+            try:
+                await pay_btn.click(force=True, timeout=5000)
+            except:
+                await page.evaluate("(btn) => btn.click()", pay_btn)
+            await asyncio.sleep(3)
+
+        # Check if payment OTP is needed
+        otp_input = await page.query_selector("input[placeholder*='OTP']")
+        if not otp_input:
+            otp_input = await page.query_selector("input[inputmode='numeric']")
+
+        if otp_input:
+            order_state["status"] = "waiting_for_payment_otp"
+            order_state["waiting_for"] = "payment_otp"
+            order_state["last_message"] = "Please send your PAYMENT OTP"
+
+            # Wait for OTP to be submitted (max 5 minutes)
+            timeout = 300
+            while order_state["status"] == "waiting_for_payment_otp" and timeout > 0:
+                await asyncio.sleep(1)
+                timeout -= 1
+
+            if order_state.get("payment_otp"):
+                otp = order_state["payment_otp"]
+                otp_inputs = await page.query_selector_all("input[inputmode='numeric']")
+                if otp_inputs:
+                    for i, digit in enumerate(otp[:6]):
+                        if i < len(otp_inputs):
+                            await otp_inputs[i].fill(digit)
+                            await asyncio.sleep(0.1)
+                else:
+                    # Single OTP input field
+                    if otp_input:
+                        await otp_input.fill(otp)
+
+                await asyncio.sleep(3)
+
+                # Click confirm/submit if there's a button
+                confirm_btn = await page.query_selector("button:has-text('Confirm')")
+                if not confirm_btn:
+                    confirm_btn = await page.query_selector("button:has-text('Submit')")
+                if not confirm_btn:
+                    confirm_btn = await page.query_selector("button:has-text('Verify')")
+                if confirm_btn:
+                    await confirm_btn.click(force=True)
+                    await asyncio.sleep(2)
 
         order_state["status"] = "completed"
-        order_state["last_message"] = f"Order completed! {len(successfully_added)} items added."
+        order_state["last_message"] = f"Order completed! {len(successfully_added)} items added to cart and checkout initiated."
 
     except Exception as e:
         order_state["status"] = "error"
