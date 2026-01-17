@@ -573,13 +573,88 @@ async def run_multi_order(items: list, phone: str, address: str):
         page = context.pages[0] if context.pages else await context.new_page()
         order_state["page"] = page
 
+        # Navigate to first item to check login status
+        first_url = items[0]["url"]
+        await page.goto(first_url, wait_until="domcontentloaded")
+        await asyncio.sleep(2)
+
+        # Check if login is needed
+        login_btn = await page.query_selector("span[data-testid='login-btn']")
+        if login_btn and await login_btn.is_visible():
+            order_state["status"] = "logging_in"
+            order_state["last_message"] = "Logging in..."
+
+            # Click login button
+            try:
+                await login_btn.click(force=True)
+            except:
+                await page.evaluate("(btn) => btn.click()", login_btn)
+            await asyncio.sleep(1)
+
+            # Enter phone number
+            phone_input = await page.query_selector("input[type='tel']")
+            if phone_input:
+                await phone_input.fill(phone)
+                await asyncio.sleep(0.5)
+
+                # Click continue/send OTP button
+                continue_btn = await page.query_selector("button:has-text('Continue')")
+                if not continue_btn:
+                    continue_btn = await page.query_selector("button:has-text('Send OTP')")
+                if not continue_btn:
+                    continue_btn = await page.query_selector("button:has-text('Get OTP')")
+
+                if continue_btn:
+                    try:
+                        await continue_btn.click(force=True)
+                    except:
+                        await page.evaluate("(btn) => btn.click()", continue_btn)
+                    await asyncio.sleep(2)
+
+            # Wait for login OTP
+            order_state["status"] = "waiting_for_login_otp"
+            order_state["waiting_for"] = "login_otp"
+            order_state["last_message"] = "Please send your LOGIN OTP"
+
+            timeout = 300  # 5 minutes
+            while order_state["status"] == "waiting_for_login_otp" and timeout > 0:
+                await asyncio.sleep(1)
+                timeout -= 1
+
+            if order_state.get("login_otp"):
+                otp = order_state["login_otp"]
+                # Find OTP input fields
+                otp_inputs = await page.query_selector_all("input[type='tel']")
+                if len(otp_inputs) >= 6:
+                    # Multiple single-digit inputs
+                    for i, digit in enumerate(otp[:6]):
+                        if i < len(otp_inputs):
+                            await otp_inputs[i].fill(digit)
+                            await asyncio.sleep(0.1)
+                elif len(otp_inputs) >= 1:
+                    # Single input field - might be for full OTP
+                    await otp_inputs[0].fill(otp)
+
+                await asyncio.sleep(3)
+
+                # Check if logged in now
+                await page.wait_for_load_state("networkidle", timeout=10000)
+            else:
+                order_state["status"] = "error"
+                order_state["last_message"] = "Login OTP not received in time"
+                return
+
+        # Now proceed with adding items
         successfully_added = []
         out_of_stock = []
 
         for i, item in enumerate(items):
+            order_state["status"] = "adding_to_cart"
             order_state["last_message"] = f"Adding item {i+1}/{len(items)}..."
 
-            await page.goto(item["url"], wait_until="domcontentloaded")
+            # Skip first item if we already loaded it
+            if i > 0 or login_btn:
+                await page.goto(item["url"], wait_until="domcontentloaded")
             await asyncio.sleep(2)  # Wait longer for page to stabilize
 
             # Check stock
